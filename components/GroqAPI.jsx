@@ -1,8 +1,8 @@
-'use client';
+"use client";
 
-import React, { useState } from 'react';
-import { Brain, Loader2, AlertCircle } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
+import React, { useState } from "react";
+import { Brain, Loader2, AlertCircle } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 
 const GroqAPI = ({ diseaseName, confidence }) => {
   const [response, setResponse] = useState("");
@@ -14,10 +14,10 @@ const GroqAPI = ({ diseaseName, confidence }) => {
     setError("");
 
     try {
-      const response = await fetch('/api/groq', {
-        method: 'POST',
+      const response = await fetch("/api/groq", {
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({
           diseaseName,
@@ -26,11 +26,17 @@ const GroqAPI = ({ diseaseName, confidence }) => {
       });
 
       if (!response.ok) {
-        throw new Error(`API request failed: ${response.status}`);
+        const errorData = await response.json().catch(() => ({}));
+
+        throw new Error(
+          errorData.message ||
+            errorData.error ||
+            `API request failed: ${response.status}`,
+        );
       }
 
       const reader = response.body.getReader();
-      const decoder = new TextDecoder('utf-8');
+      const decoder = new TextDecoder("utf-8");
 
       while (true) {
         const { done, value } = await reader.read();
@@ -86,11 +92,25 @@ const GroqAPI = ({ diseaseName, confidence }) => {
           <div className="prose prose-invert max-w-none text-slate-300">
             <ReactMarkdown
               components={{
-                h2: ({node, ...props}) => <h2 className="font-bold text-lg text-slate-100 mt-4 mb-2" {...props} />,
-                h3: ({node, ...props}) => <h3 className="font-bold text-base text-slate-200 mt-3 mb-1" {...props} />,
-                li: ({node, ...props}) => <li className="mb-1" {...props} />,
-                strong: ({node, ...props}) => <strong className="font-bold text-slate-100" {...props} />,
-                p: ({node, ...props}) => <p className="break-words" {...props} />,
+                h2: ({ node, ...props }) => (
+                  <h2
+                    className="font-bold text-lg text-slate-100 mt-4 mb-2"
+                    {...props}
+                  />
+                ),
+                h3: ({ node, ...props }) => (
+                  <h3
+                    className="font-bold text-base text-slate-200 mt-3 mb-1"
+                    {...props}
+                  />
+                ),
+                li: ({ node, ...props }) => <li className="mb-1" {...props} />,
+                strong: ({ node, ...props }) => (
+                  <strong className="font-bold text-slate-100" {...props} />
+                ),
+                p: ({ node, ...props }) => (
+                  <p className="break-words" {...props} />
+                ),
               }}
             >
               {response}
@@ -102,4 +122,4 @@ const GroqAPI = ({ diseaseName, confidence }) => {
   );
 };
 
-export default GroqAPI; 
+export default GroqAPI;

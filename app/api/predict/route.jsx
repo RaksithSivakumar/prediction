@@ -1,127 +1,165 @@
-// app/api/predict/route.js
 
-export const config = {
-  api: {
-    bodyParser: false,
-  },
+const PYTHON_API_URL = "https://tridev24-model.hf.space";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
 };
 
-const PYTHON_API_URL = 'https://tridev24-model.hf.space';
-
-export async function OPTIONS() {
-  return new Response(null, {
-    status: 200,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-    },
+function jsonResponse(data, status = 200) {
+  return Response.json(data, {
+    status,
+    headers: corsHeaders,
   });
 }
 
+// Handle CORS preflight
+export async function OPTIONS() {
+  return new Response(null, {
+    status: 204,
+    headers: corsHeaders,
+  });
+}
+
+// Health check
 export async function GET() {
   try {
-    const response = await fetch(`${PYTHON_API_URL}/api/health`);
+    const response = await fetch(
+      `${PYTHON_API_URL}/api/health`,
+      { signal: AbortSignal.timeout(15000) }
+    );
+
     const result = await response.json();
 
-    return new Response(JSON.stringify({
-      nextjs_status: 'healthy',
+    if (!response.ok) {
+      return jsonResponse({
+        nextjs_status: "healthy",
+        python_server: result,
+      }, response.status);
+    }
+
+    return jsonResponse({
+      nextjs_status: "healthy",
       python_server: result,
-    }), {
-      status: 200,
-      headers: {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-      },
     });
+
   } catch (error) {
-    return new Response(JSON.stringify({
-      nextjs_status: 'healthy',
+    console.error("Python health check failed:", error);
+
+    return jsonResponse({
+      nextjs_status: "healthy",
       python_server: {
-        status: 'unreachable',
+        status: "unreachable",
         error: error.message,
       },
-    }), {
-      status: 503,
-      headers: {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-      },
-    });
+    }, 503);
   }
 }
 
+// Disease prediction
 export async function POST(request) {
   try {
-    const contentType = request.headers.get('content-type') || '';
+    const contentType = request.headers.get("content-type") || "";
 
     let pythonResponse;
 
     // Base64 JSON request
-    if (contentType.includes('application/json')) {
+    if (contentType.includes("application/json")) {
       const body = await request.json();
       const { imageData } = body;
 
       if (!imageData) {
-        return new Response(JSON.stringify({ error: 'No image data provided', success: false }), {
-          status: 400,
-          headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-        });
+        return jsonResponse({
+          success: false,
+          error: "No image data provided",
+        }, 400);
       }
 
-      pythonResponse = await fetch(`${PYTHON_API_URL}/api/predict`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ imageData }),
-      });
-
-    } else if (contentType.includes('multipart/form-data')) {
-      // File upload
-      const formData = await request.formData();
-      const image = formData.get('image');
-
-      if (!image) {
-        return new Response(JSON.stringify({ error: 'No image file provided', success: false }), {
-          status: 400,
-          headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-        });
-      }
-
-      const buffer = await image.arrayBuffer();
-      const blob = new Blob([buffer], { type: image.type });
-      const newForm = new FormData();
-      newForm.append('image', blob, image.name);
-
-      pythonResponse = await fetch(`${PYTHON_API_URL}/api/predict`, {
-        method: 'POST',
-        body: newForm,
-      });
-    } else {
-      return new Response(JSON.stringify({ error: 'Unsupported Content-Type', success: false }), {
-        status: 415,
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-      });
+      pythonResponse = await fetch(
+        `${PYTHON_API_URL}/api/predict`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ imageData }),
+          signal: AbortSignal.timeout(120000),
+        }
+      );
     }
 
-    const result = await pythonResponse.json();
+    // Multipart image upload
+    else if (contentType.includes("multipart/form-data")) {
+      const formData = await request.formData();
+      const image = formData.get("image");
 
-    return new Response(JSON.stringify(result), {
-      status: 200,
-      headers: {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-      },
-    });
+      if (
+        !image ||
+        typeof image === "string" ||
+        typeof image.arrayBuffer !== "function"
+      ) {
+        return jsonResponse({
+          success: false,
+          error: "No valid image file provided",
+        }, 400);
+      }
+
+      const newForm = new FormData();
+
+      newForm.append(
+        "image",
+        image,
+        image.name
+      );
+
+      pythonResponse = await fetch(
+        `${PYTHON_API_URL}/api/predict`,
+        {
+          method: "POST",
+          body: newForm,
+          signal: AbortSignal.timeout(120000),
+        }
+      );
+    }
+
+    // Unsupported content type
+    else {
+      return jsonResponse({
+        success: false,
+        error: "Unsupported Content-Type",
+      }, 415);
+    }
+
+    // Handle Python API response
+    const responseText = await pythonResponse.text();
+
+    let result;
+
+    try {
+      result = JSON.parse(responseText);
+    } catch {
+      console.error("Invalid Python API response:", responseText);
+
+      return jsonResponse({
+        success: false,
+        error: "Invalid response from prediction server",
+      }, 502);
+    }
+
+    return jsonResponse(result, pythonResponse.status);
+
   } catch (error) {
-    return new Response(JSON.stringify({
-      error: 'Prediction failed',
-      message: error.message,
+    console.error("Prediction API error:", error);
+
+    const isTimeout = error.name === "TimeoutError";
+
+    return jsonResponse({
       success: false,
-    }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-    });
+      error: isTimeout
+        ? "Prediction server timed out"
+        : "Prediction failed",
+      message: error.message,
+    }, isTimeout ? 504 : 500);
   }
 }
